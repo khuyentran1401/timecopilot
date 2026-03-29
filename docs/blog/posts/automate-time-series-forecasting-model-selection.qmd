@@ -12,27 +12,33 @@ slug: "automate-time-series-forecasting-model-selection"
 
 # Automate Time Series Forecasting with TimeCopilot's LLM-Powered Model Selection
 
-The forecasting landscape has exploded. A few years ago, data scientists chose between ARIMA, ETS, and Prophet. Today, you can also pick from foundation models like Amazon Chronos, Google TimesFM, and Salesforce Moirai, each pretrained on massive time series collections and each with different strengths.
+Forecasting has progressed from statistical models like ARIMA and ETS to tools like Prophet and LightGBM, and now to foundation models like Amazon Chronos, Google TimesFM, and Salesforce Moirai.
 
-More options should mean better forecasts. In practice, it means more work: installing separate libraries, reshaping data for each API, running cross-validation for every candidate, and manually comparing metrics before you can even start forecasting.
+While more options can improve forecast quality, they also increase complexity. Evaluating them requires installing multiple libraries, adapting data to different APIs, running cross-validation, and comparing results before generating a single prediction.
 
-In this article, you'll see how TimeCopilot replaces that manual process with a single call that benchmarks statistical models, Prophet, and foundation models, then uses an LLM to select the best one and explain why.
+In this article, you will see how TimeCopilot simplifies this process into a single call that:
+
+- Benchmarks statistical and foundation models side by side
+- Uses an LLM to select the best model for your data
+- Explains why that model was chosen
 
 ## The Forecasting Landscape
 
-Before diving into code, here's a quick overview of the model families TimeCopilot evaluates.
+Before diving into code, here's a quick overview of the model families TimeCopilot supports.
 
-**Statistical models (AutoARIMA, AutoETS, Theta)** fit parameters directly from the target series. They are fast, interpretable, and work well on clean data with stable patterns. However, they struggle with complex multi-scale seasonality and require careful configuration for non-standard data.
+- **Statistical models** like AutoARIMA, AutoETS, and Theta are fast, interpretable, and fit directly from the target series. **Prophet** extends this with built-in handling of daily, weekly, and yearly seasonality plus missing data.
+- **ML and neural network models** like AutoLGBM, AutoNHITS, and AutoTFT capture nonlinear patterns and long-range dependencies through gradient boosting and deep learning architectures.
+- **Foundation models** like Chronos, TimesFM, Moirai, Toto, and TimeGPT are pretrained on millions of diverse time series and can forecast without task-specific training.
 
-**Prophet** was designed for business time series with daily, weekly, and yearly seasonality. It handles missing data and outliers well but can underperform on data with irregular or non-calendar seasonality patterns.
-
-**Foundation models (Chronos, TimesFM, Moirai)** are pretrained on millions of diverse time series. They can forecast without task-specific training, often capturing complex patterns that statistical models miss. The trade-off is higher compute cost and less interpretability.
+TimeCopilot also integrates with sktime, giving you access to 200+ additional models through a unified API.
 
 Each family has trade-offs, and the best choice depends on your data's characteristics: trend strength, seasonality patterns, noise level, and series length. Figuring this out manually for every new dataset is where most of the effort goes.
 
+That's what TimeCopilot automates. In the sections that follow, you'll first see what the manual process looks like, then how TimeCopilot replaces it with a single call.
+
 ## Setup
 
-Install TimeCopilot:
+Start by installing TimeCopilot:
 
 ```bash
 pip install timecopilot
@@ -40,13 +46,20 @@ pip install timecopilot
 
 *This article uses timecopilot v0.0.24.*
 
-TimeCopilot requires an OpenAI API key for the LLM reasoning layer. Set it as an environment variable:
+TimeCopilot uses an OpenAI API key for LLM reasoning. Add it to a `.env` file:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
+OPENAI_API_KEY="your-api-key"
 ```
 
-Load the PJM Hourly Energy Consumption dataset. This dataset contains 10+ years of hourly electricity demand with complex multi-scale seasonality (hourly, daily, weekly, annual patterns), making it a good test for automated model selection.
+And load it with:
+
+```{python}
+from dotenv import load_dotenv
+load_dotenv()
+```
+
+Load the PJM Hourly Energy Consumption dataset and use the last 3 months. This gives us hourly data with daily and weekly seasonality patterns, making it a good test for automated model selection.
 
 ```{python}
 import pandas as pd
@@ -56,16 +69,20 @@ df = pd.read_csv(
     parse_dates=["Datetime"],
 )
 
+# Use the last 3 months
+df = df.sort_values("Datetime")
+df = df[df["Datetime"] >= "2001-10-01"].reset_index(drop=True)
+
 print(df.head())
 ```
 
 ```text
-             Datetime  PJM_Load_MW
-0 2002-12-31 01:00:00      26498.0
-1 2002-12-31 02:00:00      25487.0
-2 2002-12-31 03:00:00      24891.0
-3 2002-12-31 04:00:00      24693.0
-4 2002-12-31 05:00:00      24893.0
+Datetime  PJM_Load_MW
+0 2001-10-01 00:00:00      22827.0
+1 2001-10-01 01:00:00      21478.0
+2 2001-10-01 02:00:00      20543.0
+3 2001-10-01 03:00:00      20205.0
+4 2001-10-01 04:00:00      20163.0
 ```
 
 TimeCopilot expects a DataFrame with three columns: `unique_id`, `ds`, and `y`. Rename the columns and add the series identifier:
@@ -80,28 +97,32 @@ print(f"Date range: {df['ds'].min()} to {df['ds'].max()}")
 ```
 
 ```text
-Shape: (32896, 3)
-Date range: 1998-01-01 01:00:00 to 2002-12-31 01:00:00
+Shape: (2208, 3)
+Date range: 2001-10-01 00:00:00 to 2002-01-01 00:00:00
 ```
 
 ## Manual Comparison: Fitting Models One by One
 
-To appreciate what TimeCopilot automates, consider what the manual approach looks like. You need to install separate libraries, fit each model independently, and write your own cross-validation loop.
+To evaluate multiple models manually, you need to install each library separately, adapt your data to each API, and write your own cross-validation loop.
 
-### AutoARIMA
+### AutoETS
+
+Starting with a statistical model, here's how you'd fit AutoETS using statsforecast:
 
 ```{python}
 from statsforecast import StatsForecast
-from statsforecast.models import AutoARIMA
+from statsforecast.models import AutoETS
 
-sf = StatsForecast(models=[AutoARIMA(season_length=24)], freq="h")
+sf = StatsForecast(models=[AutoETS(season_length=24)], freq="h")
 sf.fit(df=df)
-arima_forecast = sf.predict(h=48)
+ets_forecast = sf.predict(h=48)
 
-print(arima_forecast.head())
+print(ets_forecast.head())
 ```
 
 ### Prophet
+
+Next, fitting Prophet. Notice the different import, data format, and prediction API:
 
 ```{python}
 from prophet import Prophet
@@ -118,6 +139,8 @@ print(prophet_forecast[["ds", "yhat"]].tail())
 
 ### Chronos
 
+Finally, a foundation model. Chronos has its own library, requires a PyTorch tensor as input, and uses a completely different prediction interface:
+
 ```{python}
 import torch
 from chronos import ChronosPipeline
@@ -129,7 +152,7 @@ chronos_forecast = pipeline.predict(context, prediction_length=48)
 print(chronos_forecast.shape)
 ```
 
-Each model requires a different library, different data format, and different API. And this is just three models. To compare them properly, you'd also need to:
+And this is just fitting three models. To actually compare them, you'd also need to:
 
 1. Run time series cross-validation for each model
 2. Calculate error metrics (MAE, RMSE, MAPE) across folds
@@ -140,19 +163,32 @@ This process multiplies with every model you want to evaluate.
 
 ## TimeCopilot's Automated Approach
 
-TimeCopilot replaces the entire workflow above with a single call. It benchmarks all candidate models, extracts time series features, runs cross-validation, and uses an LLM to select the best model.
+TimeCopilot replaces this entire workflow with a single call. If you're running in a Jupyter notebook, apply `nest_asyncio` first:
+
+```{python}
+import nest_asyncio
+nest_asyncio.apply()
+```
+
+Then run the forecast:
 
 ```{python}
 from timecopilot import TimeCopilot
+from timecopilot.models import AutoETS, SeasonalNaive
+from timecopilot.models.foundation.chronos import Chronos
 
-tc = TimeCopilot(llm="openai:gpt-4o", retries=3)
+tc = TimeCopilot(
+    llm="openai:gpt-4o",
+    retries=3,
+    forecasters=[AutoETS(), SeasonalNaive(), Chronos()],
+)
 result = tc.forecast(df=df, freq="h")
 ```
 
-That's it. Behind the scenes, TimeCopilot:
+That's it. Behind the scenes, TimeCopilot automatically:
 
 1. Extracts statistical features from the time series (trend strength, seasonality, autocorrelation, entropy)
-2. Runs cross-validation across statistical models (AutoARIMA, AutoETS, Theta, SeasonalNaive), and foundation models (Chronos, TimesFM, Moirai)
+2. Runs cross-validation across its default models: AutoARIMA, AutoETS, Theta, SeasonalNaive, Chronos, TimesFM, and Moirai
 3. Compares performance metrics
 4. Uses the LLM to interpret results and select the best model
 
@@ -245,14 +281,13 @@ The `reason_for_selection` is what sets TimeCopilot apart from a simple grid sea
 
 ## Conclusion
 
-Manually comparing AutoARIMA, Prophet, Chronos, TimesFM, and Moirai requires managing five different libraries, data formats, and cross-validation pipelines. TimeCopilot consolidates this into a single call that benchmarks all candidates and explains the result.
+Manually comparing AutoETS, Prophet, Chronos, TimesFM, and Moirai requires managing different libraries, data formats, and cross-validation pipelines. TimeCopilot consolidates this into a single call that benchmarks all candidates and explains the result.
 
-This automated approach works best when:
+This works for both exploration and production:
 
-- You're exploring a new dataset and need a quick baseline
-- You want to compare foundation models against statistical models without writing boilerplate
-- You need to explain model selection decisions to stakeholders
-
-For production systems where you need fine-grained control over hyperparameters or custom model architectures, TimeCopilot's automated selection gives you a strong starting point. You can then extend it with custom models using the [sktime integration](https://timecopilot.dev/blog/timecopilot-sktime-integration/) or by passing additional forecasters directly.
+- Quick baselines on new datasets
+- Automated model selection in production pipelines
+- Stakeholder-ready explanations of why a model was chosen
+- Custom model evaluation via the `forecasters` parameter or the [sktime integration](https://timecopilot.dev/blog/timecopilot-sktime-integration/)
 
 Get started with TimeCopilot on [GitHub](https://github.com/TimeCopilot/timecopilot).
