@@ -101,6 +101,14 @@ Shape: (2208, 3)
 Date range: 2001-10-01 00:00:00 to 2002-01-01 00:00:00
 ```
 
+Let's visualize the data to see the patterns we're working with:
+
+```{python}
+from timecopilot.models.utils.forecaster import Forecaster
+
+Forecaster.plot(df=df, engine="plotly")
+```
+
 ## Manual Comparison: Fitting Models One by One
 
 To evaluate multiple models manually, you need to install each library separately, adapt your data to each API, and write your own cross-validation loop.
@@ -180,87 +188,22 @@ from timecopilot.models.foundation.chronos import Chronos
 tc = TimeCopilot(
     llm="openai:gpt-4o",
     retries=3,
-    forecasters=[AutoETS(), SeasonalNaive(), Chronos()],
+    forecasters=[
+        AutoETS(),
+        SeasonalNaive(),
+        Chronos(repo_id="amazon/chronos-bolt-small"),
+    ],
 )
 result = tc.forecast(df=df, freq="h")
 ```
 
+
 That's it. Behind the scenes, TimeCopilot automatically:
 
 1. Extracts statistical features from the time series (trend strength, seasonality, autocorrelation, entropy)
-2. Runs cross-validation across its default models: AutoARIMA, AutoETS, Theta, SeasonalNaive, Chronos, TimesFM, and Moirai
+2. Runs cross-validation across the specified models: AutoETS, SeasonalNaive, and Chronos
 3. Compares performance metrics
 4. Uses the LLM to interpret results and select the best model
-
-Access the full analysis:
-
-```{python}
-print(result.output.tsfeatures_analysis)
-```
-
-```text
-The time series for 'PJM' exhibits strong seasonality with a period of 24 hours, as expected for hourly energy consumption data. The 'trend' feature indicates a moderate upward trend over the multi-year period. High 'seasonal_strength' confirms that daily consumption cycles dominate the signal. The 'entropy' value suggests moderate predictability, and significant autocorrelation at multiple lags reflects the layered daily, weekly, and annual patterns.
-```
-
-The LLM doesn't just report numbers. It interprets the statistical features in the context of the data, explaining what the patterns mean for model selection.
-
-## Comparing Foundation Models
-
-The cross-validation results reveal how each model family performed on the energy consumption data:
-
-```{python}
-print(result.output.cross_validation_results)
-```
-
-```text
-{'SeasonalNaive': 3842.15, 'AutoARIMA': 2891.43, 'AutoETS': 3156.78, 'Theta': 3201.55, 'Chronos': 2134.67, 'TimesFM': 2287.91, 'Moirai': 2456.32}
-```
-
-The foundation models (Chronos, TimesFM, Moirai) outperform the statistical models on this dataset. This makes sense: hourly energy data has layered seasonality patterns (daily peaks, weekly workday/weekend shifts, annual heating/cooling cycles) that foundation models, pretrained on diverse time series, are well-equipped to capture.
-
-Access the comparative analysis:
-
-```{python}
-print(result.output.model_comparison)
-```
-
-This gives you a natural language breakdown of how each model performed and why certain models struggled or excelled on this particular data.
-
-Check whether the selected model beats the seasonal naive baseline:
-
-```{python}
-print(result.output.is_better_than_seasonal_naive)
-```
-
-```text
-True
-```
-
-The seasonal naive baseline repeats the last observed seasonal cycle. Beating it confirms that the selected model is capturing patterns beyond simple repetition.
-
-## Understanding Model Selection
-
-TimeCopilot doesn't just pick the model with the lowest error. The LLM reasons about the results in context.
-
-See which model was selected:
-
-```{python}
-print(result.output.selected_model)
-```
-
-```text
-Chronos
-```
-
-Understand why:
-
-```{python}
-print(result.output.reason_for_selection)
-```
-
-```text
-Chronos was selected because it achieved the lowest cross-validation error across all folds. The PJM energy consumption data exhibits complex multi-scale seasonality (daily, weekly, annual) that foundation models handle well due to pretraining on diverse temporal patterns. Chronos specifically outperformed TimesFM and Moirai on this hourly-frequency data, likely because its architecture is optimized for high-frequency series with strong periodic components. Statistical models like AutoARIMA captured the daily cycle but struggled with the interaction between weekly and annual seasonality layers.
-```
 
 Access the forecast DataFrame for downstream use:
 
@@ -277,13 +220,73 @@ print(result.fcst_df.head())
 4       PJM 2003-01-01 06:00:00        25678.90
 ```
 
-The `reason_for_selection` is what sets TimeCopilot apart from a simple grid search. It doesn't just tell you which model won. It explains why that model suits your specific data characteristics, giving you the context needed to trust or override the recommendation.
+Visualize the forecast alongside the historical data:
+
+```{python}
+Forecaster.plot(df=df, forecasts_df=result.fcst_df, engine="plotly")
+```
+
+
+Access the full analysis:
+
+```{python}
+print(result.output.tsfeatures_analysis)
+```
+
+```text
+The PJM time series exhibits high seasonal strength with a detected period of 24 hours, typical for electrical load data following a daily pattern.
+
+The series length is 2208 points, providing a substantial dataset. Trend strength is also notable, reflecting a persistent increase in energy usage over time.
+
+The unit root test (PP) shows stationarity, suggesting that stationarity-inducing transformations are unnecessary.
+```
+
+Notice how the LLM goes beyond reporting numbers. It connects the 24-hour seasonality to the domain (electrical load patterns) and flags that no stationarity transforms are needed, saving you a preprocessing step.
+
+## Model Selection
+
+Check the raw MASE scores from cross-validation:
+
+```{python}
+print(result.eval_df)
+```
+
+```text
+  metric  AutoETS  SeasonalNaive   Chronos
+0   mase  1.81844       1.101427  0.701438
+```
+
+A MASE below 1.0 means the model beats the naive baseline. Chronos achieves 0.70, nearly half the error of AutoETS (1.82).
+
+See which model TimeCopilot selected:
+
+```{python}
+print(result.output.selected_model)
+```
+
+```text
+Chronos
+```
+
+Stakeholders need more than a winner, they need to understand why. However, translating MASE scores into a clear narrative usually requires deep expertise. TimeCopilot's `model_comparison` handles this for you:
+
+```{python}
+print(result.output.model_comparison)
+```
+
+```text
+Chronos outperformed all other models, including SeasonalNaive and AutoETS, with the lowest MASE of 0.701.
+
+While SeasonalNaive was better than many models, indicating its strength as a benchmark for seasonal data, Chronos provided significant improvements by capturing intricate seasonal patterns that other models couldn't.
+```
+
+Instead of interpreting MASE scores yourself, you get a clear explanation of both the winning model and why the alternatives fell short. You can then use this to create a report or stakeholder presentation.
 
 ## Conclusion
 
 Manually comparing AutoETS, Prophet, Chronos, TimesFM, and Moirai requires managing different libraries, data formats, and cross-validation pipelines. TimeCopilot consolidates this into a single call that benchmarks all candidates and explains the result.
 
-This works for both exploration and production:
+It supports both exploration and production use cases:
 
 - Quick baselines on new datasets
 - Automated model selection in production pipelines
