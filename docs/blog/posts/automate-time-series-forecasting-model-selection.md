@@ -22,6 +22,8 @@ In this article, you will see how TimeCopilot simplifies this process into a sin
 - Uses an LLM to select the best model for your data
 - Explains why that model was chosen
 
+<!-- more -->
+
 ## The Forecasting Landscape
 
 Before diving into code, here's a quick overview of the model families TimeCopilot supports.
@@ -54,14 +56,14 @@ OPENAI_API_KEY="your-api-key"
 
 And load it with:
 
-```{python}
+```python
 from dotenv import load_dotenv
 load_dotenv()
 ```
 
 Load the PJM Hourly Energy Consumption dataset and use the last 3 months. This gives us hourly data with daily and weekly seasonality patterns, making it a good test for automated model selection.
 
-```{python}
+```python
 import pandas as pd
 
 df = pd.read_csv(
@@ -87,13 +89,13 @@ Datetime  PJM_Load_MW
 
 TimeCopilot expects a DataFrame with three columns: `unique_id`, `ds`, and `y`. Rename the columns and add the series identifier:
 
-```{python}
+```python
 df = df.rename(columns={"Datetime": "ds", "PJM_Load_MW": "y"})
 ```
 
 Some foundation models (like Moirai) require uniformly spaced timestamps. This dataset has a one-hour gap, so fill it with interpolation:
 
-```{python}
+```python
 df = df.sort_values("ds").set_index("ds").asfreq("h").interpolate().reset_index()
 df["unique_id"] = "PJM"
 
@@ -108,7 +110,7 @@ Date range: 2001-10-01 00:00:00 to 2002-01-01 00:00:00
 
 Let's visualize the data to see the patterns we're working with:
 
-```{python}
+```python
 from timecopilot.models.utils.forecaster import Forecaster
 
 Forecaster.plot(df=df, engine="plotly")
@@ -124,7 +126,7 @@ To evaluate multiple models manually, you need to install each library separatel
 
 Starting with a statistical model, here's how you'd fit AutoETS using statsforecast:
 
-```{python}
+```python
 from statsforecast import StatsForecast
 from statsforecast.models import AutoETS
 
@@ -148,7 +150,7 @@ unique_id                  ds       AutoETS
 
 Next, fitting DynamicOptimizedTheta. It uses the same statsforecast library as AutoETS, but with a different modeling approach based on theta decomposition:
 
-```{python}
+```python
 from statsforecast import StatsForecast
 from statsforecast.models import DynamicOptimizedTheta
 
@@ -172,7 +174,7 @@ unique_id                  ds  DynamicOptimizedTheta
 
 Finally, a foundation model. Chronos has its own library, requires a PyTorch tensor as input, and uses a completely different prediction interface:
 
-```{python}
+```python
 import torch
 from chronos import ChronosPipeline
 
@@ -201,14 +203,14 @@ This process multiplies with every model you want to evaluate.
 
 TimeCopilot replaces this entire workflow with a single call. If you're running in a Jupyter notebook, apply `nest_asyncio` first:
 
-```{python}
+```python
 import nest_asyncio
 nest_asyncio.apply()
 ```
 
 Then run the forecast:
 
-```{python}
+```python
 from timecopilot import TimeCopilot
 from timecopilot.models import AutoETS, DynamicOptimizedTheta
 from timecopilot.models.foundation.chronos import Chronos
@@ -237,7 +239,7 @@ That's it. Behind the scenes, TimeCopilot automatically:
 
 Access the full analysis:
 
-```{python}
+```python
 print(result.output.tsfeatures_analysis)
 ```
 
@@ -255,7 +257,7 @@ Notice how the LLM goes beyond reporting numbers. It connects the 24-hour season
 
 Check the raw MASE scores from cross-validation:
 
-```{python}
+```python
 print(result.eval_df)
 ```
 
@@ -272,7 +274,7 @@ Lower MASE means better accuracy. A few things stand out:
 
 See which model TimeCopilot selected:
 
-```{python}
+```python
 print(result.output.selected_model)
 ```
 
@@ -282,7 +284,7 @@ Chronos
 
 Stakeholders need more than a winner, they need to understand why. However, translating MASE scores into a clear narrative usually requires deep expertise. TimeCopilot's `model_comparison` handles this for you:
 
-```{python}
+```python
 print(result.output.model_comparison)
 ```
 
@@ -300,7 +302,7 @@ Instead of interpreting MASE scores yourself, you get a clear explanation of bot
 
 Visualize the forecast alongside the historical data:
 
-```{python}
+```python
 Forecaster.plot(df=df, forecasts_df=result.fcst_df, engine="plotly")
 ```
 
@@ -310,7 +312,7 @@ The plot shows only Chronos's forecast because TimeCopilot generates the final p
 
 Access the forecast DataFrame for downstream use:
 
-```{python}
+```python
 print(result.fcst_df.head())
 ```
 
@@ -328,7 +330,7 @@ unique_id                  ds  Chronos
 
 TimeCopilot isn't limited to model selection. After running the forecast, you can ask natural language questions about the results:
 
-```{python}
+```python
 answer1 = tc.query("What is the expected peak energy consumption in the next 48 hours?")
 print(answer1.output)
 ```
@@ -341,7 +343,7 @@ If you're interested in visualizing these forecasts and seeing how they compare 
 
 Since the agent remembers the conversation, you can ask follow-up questions without repeating context:
 
-```{python}
+```python
 answer2 = tc.query("Show me a plot of the forecast")
 print(answer2.output)
 ```
