@@ -6,8 +6,10 @@ import nest_asyncio
 import pandas as pd
 
 from timecopilot import TimeCopilot
-from timecopilot.models import AutoETS, SeasonalNaive
+from timecopilot.models import AutoETS
 from timecopilot.models.foundation.chronos import Chronos
+from timecopilot.models.foundation.moirai import Moirai
+from timecopilot.models.prophet import Prophet
 
 nest_asyncio.apply()
 
@@ -31,7 +33,12 @@ print(f"Date range: {df['ds'].min()} to {df['ds'].max()}")
 tc = TimeCopilot(
     llm="openai:gpt-4o",
     retries=3,
-    forecasters=[AutoETS(), SeasonalNaive(), Chronos(repo_id="amazon/chronos-bolt-small")],
+    forecasters=[
+        AutoETS(),
+        Prophet(),
+        Chronos(repo_id="amazon/chronos-bolt-tiny"),
+        Moirai(repo_id="Salesforce/moirai-1.0-R-small"),
+    ],
 )
 result = tc.forecast(df=df, freq="h")
 
@@ -39,8 +46,8 @@ result = tc.forecast(df=df, freq="h")
 print("\n--- Time Series Features Analysis ---")
 print(result.output.tsfeatures_analysis)
 
-print("\n--- Cross-Validation Results ---")
-print(result.output.cross_validation_results)
+print("\n--- Eval DataFrame ---")
+print(result.eval_df)
 
 print("\n--- Model Comparison ---")
 print(result.output.model_comparison)
