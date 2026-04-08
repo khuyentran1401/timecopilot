@@ -16,6 +16,8 @@ slug: forecasting-the-agentic-way
 
 TimeCopilot is open-source agentic forecasting with LLMs and the strongest time series models. We started TimeCopilot with a clear goal. We want to democratize time series forecasting and make it accessible not only to humans but to the next wave of automated agentic systems. Accurate, automated, and easy forecasts.
 
+<!-- more -->
+
 ## We are all grounded by temporal data
 
 In 2005, Steve Jobs [told the Stanford graduating class](https://www.youtube.com/watch?v=UF8uR6Z6KLc) that we can only connect the dots looking backwards. At a fundamental level, he named one of the forces that shapes how we live. He explained how we move through the world without knowing what our actions will create, and why trusting those actions matters when the outcome is uncertain. For professionals who work with forecasts every day, this is not an abstract idea. Our work supports planning, risk, demand, supply, energy, finance, operations, and more. And as Steve said, the success of our work depends on how well we use past outcomes in the form of time series data to see what the future might look like through the lens of our own context.

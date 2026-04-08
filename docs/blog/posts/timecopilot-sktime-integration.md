@@ -22,6 +22,8 @@ In this article, you'll learn how to:
 - Combine sktime models with foundation models like Chronos
 - Run unified cross-validation across all models
 
+<!-- more -->
+
 ## What is sktime?
 
 sktime is a unified Python framework for time series machine learning. It provides a consistent, scikit-learn-style API across 200+ forecasting models (with classification and other tasks coming soon), including:
