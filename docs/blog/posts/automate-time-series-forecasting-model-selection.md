@@ -118,61 +118,21 @@ Forecaster.plot(df=df, engine="plotly")
 
 ![PJM Hourly Energy Consumption](images/pjm-energy-consumption.png)
 
-## Manual Comparison: Fitting Models One by One
+## Manual Comparison: Running Foundation Models by Hand
 
-To evaluate multiple models manually, you need to install each library separately, adapt your data to each API, and write your own cross-validation loop.
+A [foundation model](https://timecopilot.dev/api/models/foundation/models/) for time series is a large neural network pretrained on diverse datasets so it can forecast new series without retraining. TimeCopilot supports several leading foundation models, each promising strong zero-shot accuracy:
 
-### AutoETS
+- **Chronos** (Amazon)
+- **Moirai** (Salesforce)
+- **TimesFM** (Google)
+- **Toto** (Datadog)
+- **TimeGPT** (Nixtla)
 
-Starting with a statistical model, here's how you'd fit AutoETS using statsforecast:
-
-```python
-from statsforecast import StatsForecast
-from statsforecast.models import AutoETS
-
-sf = StatsForecast(models=[AutoETS(season_length=24)], freq="h")
-sf.fit(df=df)
-ets_forecast = sf.predict(h=48)
-
-print(ets_forecast.head())
-```
-
-```text
-unique_id                  ds       AutoETS
-0       PJM 2002-01-01 01:00:00  28896.471167
-1       PJM 2002-01-01 02:00:00  27728.952182
-2       PJM 2002-01-01 03:00:00  27172.454209
-3       PJM 2002-01-01 04:00:00  26941.530360
-4       PJM 2002-01-01 05:00:00  27129.414050
-```
-
-### DynamicOptimizedTheta
-
-Next, fitting DynamicOptimizedTheta. It uses the same statsforecast library as AutoETS, but with a different modeling approach based on theta decomposition:
-
-```python
-from statsforecast import StatsForecast
-from statsforecast.models import DynamicOptimizedTheta
-
-sf_theta = StatsForecast(models=[DynamicOptimizedTheta(season_length=24)], freq="h")
-sf_theta.fit(df=df)
-theta_forecast = sf_theta.predict(h=48)
-
-print(theta_forecast.head())
-```
-
-```text
-unique_id                  ds  DynamicOptimizedTheta
-0       PJM 2002-01-01 01:00:00           29296.888631
-1       PJM 2002-01-01 02:00:00           28065.552362
-2       PJM 2002-01-01 03:00:00           27512.866148
-3       PJM 2002-01-01 04:00:00           27362.755633
-4       PJM 2002-01-01 05:00:00           27860.381206
-```
+But each model has its own library, API, and output format. Let's see what that looks like in practice:
 
 ### Chronos
 
-Finally, a foundation model. Chronos has its own library, requires a PyTorch tensor as input, and uses a completely different prediction interface:
+Chronos takes a raw PyTorch tensor and outputs multiple forecast samples per step. You'll need to reduce them (e.g. via median) to get a single prediction:
 
 ```python
 import torch
@@ -182,26 +142,76 @@ pipeline = ChronosPipeline.from_pretrained("amazon/chronos-t5-small", device_map
 context = torch.tensor(df["y"].values[-512:])
 chronos_forecast = pipeline.predict(context, prediction_length=48)
 
-median_forecast = chronos_forecast.median(dim=1).values.squeeze().numpy()
-print(median_forecast[:5])
+chronos_median = chronos_forecast.median(dim=1).values.squeeze().numpy()
+print(chronos_median[:5])
 ```
 
 ```text
 [29529.867 28641.75  28197.693 28197.693 28641.75 ]
 ```
 
-And this is just fitting three models. To actually compare them, you'd also need to:
+### Moirai
 
-1. Run time series cross-validation for each model
-2. Calculate error metrics (MAE, RMSE, MAPE) across folds
-3. Determine which model performed best
+Moirai is built on GluonTS and uses a completely different stack. You have to wrap your DataFrame in a GluonTS `PandasDataset`, construct the forecast model with explicit patch and context settings, and iterate over forecast objects to extract values:
+
+```python
+import numpy as np
+from gluonts.dataset.pandas import PandasDataset
+from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
+
+moirai_df = df.set_index("ds")[["y"]]
+ds = PandasDataset(dict(PJM=moirai_df), target="y")
+
+model = MoiraiForecast(
+    module=MoiraiModule.from_pretrained("Salesforce/moirai-1.0-R-small"),
+    prediction_length=48,
+    context_length=512,
+    patch_size=16,
+    num_samples=100,
+    target_dim=1,
+    feat_dynamic_real_dim=0,
+    past_feat_dynamic_real_dim=0,
+)
+
+predictor = model.create_predictor(batch_size=32)
+moirai_forecasts = list(predictor.predict(ds))
+moirai_median = np.median(moirai_forecasts[0].samples, axis=0)
+print(moirai_median[:5])
+```
+
+```text
+[30253.531 30284.766 30945.984 30687.44  30284.766]
+```
+
+### The reconciliation problem
+
+Now you have two forecasts that don't agree:
+
+- Chronos predicts demand will drop over the next few hours
+- Moirai predicts demand will stay elevated or rise
+- The two models disagree on both the magnitude and direction of the forecast
+
+Which one should you trust? You might be tempted to:
+
+- **Average them**, which drags accurate forecasts toward inaccurate ones instead of letting the better model win
+- **Pick by intuition**, but there's no way to verify your choice is right, and a worse model can easily look more convincing than the better one
+
+Neither approach works.
+
+The right approach is to let past performance decide which model to trust. Manually, that looks like:
+
+1. Run time series cross-validation for each model on historical folds
+2. Calculate error metrics (MAE, RMSE, MASE) across folds
+3. Determine which model performed best on your data
 4. Re-fit the winning model on the full dataset
 
-This process multiplies with every model you want to evaluate.
+And that's just for two foundation models. The work grows with every new candidate you want to evaluate, whether it's another foundation model or a classical statistical one.
 
 ## TimeCopilot's Automated Approach
 
-TimeCopilot replaces this entire workflow with a single call. If you're running in a Jupyter notebook, apply `nest_asyncio` first:
+TimeCopilot does all of this in one call. It cross-validates your models, picks the best one by accuracy, and explains why, using a single interface that works for both foundation and classical models.
+
+Let's see it in action. If you're running in a Jupyter notebook, apply `nest_asyncio` first:
 
 ```python
 import nest_asyncio
