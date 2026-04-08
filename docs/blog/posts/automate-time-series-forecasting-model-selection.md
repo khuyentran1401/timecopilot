@@ -118,7 +118,7 @@ Forecaster.plot(df=df, engine="plotly")
 
 ![PJM Hourly Energy Consumption](images/pjm-energy-consumption.png)
 
-## Manual Comparison: Running Foundation Models by Hand
+## Manual Comparison Across Models
 
 A [foundation model](https://timecopilot.dev/api/models/foundation/models/) for time series is a large neural network pretrained on diverse datasets so it can forecast new series without retraining. TimeCopilot supports several leading foundation models, each promising strong zero-shot accuracy:
 
